@@ -1,0 +1,110 @@
+name: Temporary PR 1010 config patch
+
+on:
+  push:
+    branches:
+      - tmp/pr1010-coderabbit-config-patch
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch exact config source
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("src/config.ts")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = [
+              (
+                  'import { refreshUserCostOverlays, withPreservedDiskOnlyProviders } from "./usage/user-cost-overlays";',
+                  '''import {
+            COST4_RATE_KEYS,
+            isValidCost4Rate,
+            refreshUserCostOverlays,
+            withPreservedDiskOnlyProviders,
+          } from "./usage/user-cost-overlays";''',
+              ),
+              (
+                  '''const MODEL_COST_RATE_KEYS = ["input", "output", "cacheRead", "cacheWrite"] as const;
+
+          export function providerModelCostsConfigError''',
+                  '''export function providerModelCostsConfigError''',
+              ),
+              (
+                  '''    for (const key of MODEL_COST_RATE_KEYS) {
+                const rate = rates[key];
+                if (typeof rate !== "number" || !Number.isFinite(rate) || rate < 0 || rate > MAX_COST4_RATE) {''',
+                  '''    for (const key of COST4_RATE_KEYS) {
+                const rate = rates[key];
+                if (!isValidCost4Rate(rate)) {''',
+              ),
+              (
+                  '''    const extraKeys = Object.keys(rates).filter((key) => !(MODEL_COST_RATE_KEYS as readonly string[]).includes(key));''',
+                  '''    const extraKeys = Object.keys(rates)
+                .filter((key) => !(COST4_RATE_KEYS as readonly string[]).includes(key));''',
+              ),
+              (
+                  '''    const valid = (rate: unknown): rate is number =>
+                typeof rate === "number" && Number.isFinite(rate) && rate >= 0 && rate <= MAX_COST4_RATE;
+              if (valid(input) && valid(output) && valid(cacheRead) && valid(cacheWrite)) {''',
+                  '''    if (
+                isValidCost4Rate(input)
+                && isValidCost4Rate(output)
+                && isValidCost4Rate(cacheRead)
+                && isValidCost4Rate(cacheWrite)
+              ) {''',
+              ),
+              (
+                  ''' * Load and validate config.json into an OcxConfig. Missing or broken files fall
+           * back to defaults (invalid files are backed up first); a partially-invalid
+           * config is merged with defaults so providers and pool accounts survive. Also
+           * refreshes the user cost-overlay registry from the resulting config.''',
+                  ''' * Load and validate config.json into an OcxConfig. Missing files reset to
+           * defaults and clear stale overlays. Broken existing files also fall back to
+           * default routing (after backup), but keep the last-good cost-overlay registry
+           * until a valid config or a genuinely missing file is observed. A partially-
+           * invalid config is merged with defaults so providers and pool accounts survive.''',
+              ),
+              (
+                  '''    warnAndBackupInvalidConfig(configPath, result.error);
+              return withRefreshedCostOverlays(getDefaultConfig());
+            } catch (error) {
+              warnAndBackupInvalidConfig(configPath, error);
+              return withRefreshedCostOverlays(getDefaultConfig());''',
+                  '''    warnAndBackupInvalidConfig(configPath, result.error);
+              return getDefaultConfig();
+            } catch (error) {
+              warnAndBackupInvalidConfig(configPath, error);
+              return getDefaultConfig();''',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one replacement match, found {count}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+          git diff --check -- src/config.ts
+      - name: Commit patched config and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "OpenCodex Maintainer Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/pr1010-config-patch.yml
+          git add src/config.ts
+          git diff --cached --check
+          git commit -m "fix(usage): align overlay config fallback and validation"
+          git push origin HEAD:tmp/pr1010-coderabbit-config-patch
