@@ -26,18 +26,21 @@ export interface VersionCache {
   tag: Channel;
 }
 
-function versionFilePath(): string {
-  return join(getConfigDir(), VERSION_FILENAME);
+function versionFilePath(channel: Channel = "latest"): string {
+  // One cached answer per channel so the dashboard can surface both the
+  // latest and preview tracks without a cross-channel comparison. The latest
+  // channel keeps the historical `version.json` filename for compatibility.
+  const name = channel === "preview" ? "version-preview.json" : VERSION_FILENAME;
+  return join(getConfigDir(), name);
 }
 
 /**
- * Read the cached version info. Returns null on any error or when the cached
- * channel differs from the current one (so a stable<->preview switch re-fetches
- * instead of comparing across channels).
+ * Read the cached version info for a channel. Returns null on any error or when
+ * the cached channel differs from the requested one.
  */
 export function readVersionCache(channel: Channel): VersionCache | null {
   try {
-    const raw = readFileSync(versionFilePath(), "utf8");
+    const raw = readFileSync(versionFilePath(channel), "utf8");
     const parsed = JSON.parse(raw) as Partial<VersionCache>;
     if (typeof parsed.latest_version !== "string" || typeof parsed.last_checked_at !== "string") return null;
     if (parsed.tag !== channel) return null;
@@ -54,7 +57,7 @@ export function readVersionCache(channel: Channel): VersionCache | null {
 
 export function writeVersionCache(cache: VersionCache): void {
   try {
-    atomicWriteFile(versionFilePath(), `${JSON.stringify(cache)}\n`);
+    atomicWriteFile(versionFilePath(cache.tag), `${JSON.stringify(cache)}\n`);
   } catch {
     /* best-effort; never block startup */
   }
@@ -234,6 +237,11 @@ export async function maybeShowUpdatePrompt(): Promise<void> {
 
     const cache = readVersionCache(channel);
     triggerBackgroundRefreshIfStale(channel, cache);
+    // Also keep the *other* track's cache fresh so the dashboard can surface
+    // both the latest and preview versions (the badge reads the current
+    // channel, but the update dialog offers a channel switch).
+    const otherChannel: Channel = channel === "preview" ? "latest" : "preview";
+    triggerBackgroundRefreshIfStale(otherChannel, readVersionCache(otherChannel));
 
     const latest = getUpgradeVersionForPopup(cache, current, channel);
     if (!latest) return;

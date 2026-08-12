@@ -55,8 +55,11 @@ export function readUpdateBadge(deps: UpdateBadgeDeps = defaultDeps): UpdateBadg
     canUpdate: installer !== "source",
     unknown: true,
   };
-  // A source checkout has nothing to compare against, so "unknown" is not useful there.
-  if (installer === "source" || current === "?" || isSourceBuildVersion(current)) {
+  // A source checkout (git working tree) cannot perform a one-click update, so
+  // canUpdate stays false — but it still has a real version to compare against,
+  // so it must surface the cached latest/preview rather than hiding the badge.
+  // Only an unreadable/placeholder version (0.0.0 or "?") is truly unknowable.
+  if (current === "?" || isSourceBuildVersion(current)) {
     return { ...base, canUpdate: false, unknown: false };
   }
 
